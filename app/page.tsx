@@ -4,7 +4,7 @@ import { useState } from 'react';
 export interface BookItem {
   id: string;
   title: string;
-  type: 'PDF';
+  type: 'EBOOK';
   fileUrl: string;
   size: string;
 }
@@ -15,15 +15,20 @@ export interface SwapRequest {
   bookRequested: string;
   bookOffered: string;
   status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  fileUrl: string;
+  size: string;
 }
 
-const SUBJECTS = [
-  'Zero-Knowledge Cryptography', 'DeFi Algorithmic Market Design', 'Distributed Systems Engineering',
-  'Neuro-Link Interface Protocol', 'Biomimicry Systems Design', 'Behavioral Game Theory',
-  'Applied Linear Topology', 'Quantum Telemetry', 'Autonomous Agent Architecture'
+// Fixed Gutenberg Cache Stream Pool
+const DISCOVERY_POOL = [
+  { title: 'Pride and Prejudice.html', url: 'https://www.gutenberg.org/cache/epub/1342/pg1342-images.html', size: '1.1 MB' },
+  { title: 'The Count of Monte Cristo.html', url: 'https://www.gutenberg.org/cache/epub/1184/pg1184-images.html', size: '4.8 MB' },
+  { title: 'The Adventures of Sherlock Holmes.html', url: 'https://www.gutenberg.org/cache/epub/1661/pg1661-images.html', size: '1.5 MB' },
+  { title: 'Alice in Wonderland (Illustrated).html', url: 'https://www.gutenberg.org/cache/epub/11/pg11-images.html', size: '0.9 MB' },
+  { title: 'The Time Machine.html', url: 'https://www.gutenberg.org/cache/epub/35/pg35-images.html', size: '0.6 MB' },
+  { title: 'Frankenstein (1818 Edition).html', url: 'https://www.gutenberg.org/cache/epub/84/pg84-images.html', size: '1.2 MB' },
+  { title: 'The Art of War.html', url: 'https://www.gutenberg.org/cache/epub/132/pg132-images.html', size: '0.5 MB' }
 ];
-
-const FORMATS = ['Special Edition', 'Research Draft', 'Vol IV', 'MSc Thesis', 'Symposium Notes', 'Revised Layout'];
 
 export default function LeafletApp() {
   // --- 1. CORE CLIENT STATE ---
@@ -32,29 +37,34 @@ export default function LeafletApp() {
   const [tradeCount, setTradeCount] = useState<number>(0);
   
   const [myShelf, setMyShelf] = useState<BookItem[]>([
-    { id: '1', title: 'Quantum Computing Foundations.pdf', type: 'PDF', fileUrl: 'https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf', size: '1.2 MB' },
-    { id: '2', title: 'Intro to Rust Programming.pdf', type: 'PDF', fileUrl: 'https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf', size: '2.5 MB' },
-    { id: '3', title: 'The Problems of Philosophy.pdf', type: 'PDF', fileUrl: 'https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf', size: '3.1 MB' }
+    { id: 'init_1', title: 'Pride and Prejudice.html', type: 'EBOOK', fileUrl: 'https://www.gutenberg.org/cache/epub/1342/pg1342-images.html', size: '1.1 MB' },
+    { id: 'init_2', title: 'The Count of Monte Cristo.html', type: 'EBOOK', fileUrl: 'https://www.gutenberg.org/cache/epub/1184/pg1184-images.html', size: '4.8 MB' },
+    { id: 'init_3', title: 'The Time Machine.html', type: 'EBOOK', fileUrl: 'https://www.gutenberg.org/cache/epub/35/pg35-images.html', size: '0.6 MB' }
   ]);
 
   const [globalPool, setGlobalPool] = useState<BookItem[]>([]);
   const [tradeRequests, setTradeRequests] = useState<SwapRequest[]>([]);
 
-  // --- 2. GENERATION UTILITY ENGINE ---
-  const generateUniquePeerOffer = (requestedBookTitle: string): SwapRequest => {
-    const safeSubjects = SUBJECTS.filter(s => !myShelf.some(owned => owned.title.includes(s)));
-    const selectedSubject = safeSubjects.length > 0 
-      ? safeSubjects[Math.floor(Math.random() * safeSubjects.length)]
-      : SUBJECTS[Math.floor(Math.random() * SUBJECTS.length)];
+  // --- 2. UNIQUE DISCOVERY FILTER GENERATOR ---
+  const generateUniquePeerOffer = (requestedBookTitle: string, existingBids: SwapRequest[]): SwapRequest => {
+    const ownedTitles = myShelf.map(b => b.title);
+    const pooledTitles = globalPool.map(b => b.title);
+    const activeBidTitles = [...tradeRequests, ...existingBids].map(r => r.bookOffered);
+    const forbiddenTitles = [...ownedTitles, ...pooledTitles, ...activeBidTitles];
 
-    const format = FORMATS[Math.floor(Math.random() * FORMATS.length)];
-    const constructedTitle = `${selectedSubject} (${format}).pdf`;
+    const availablePool = DISCOVERY_POOL.filter(item => !forbiddenTitles.includes(item.title));
+
+    const chosenSelection = availablePool.length > 0
+      ? availablePool[Math.floor(Math.random() * availablePool.length)]
+      : { title: 'Moby Dick (Surplus Copy).html', url: 'https://www.gutenberg.org/cache/epub/2701/pg2701-images.html', size: '3.2 MB' };
 
     return {
       id: `req_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       peerNode: `Node_${Math.floor(Math.random() * 899 + 100)}`,
       bookRequested: requestedBookTitle,
-      bookOffered: constructedTitle,
+      bookOffered: chosenSelection.title,
+      fileUrl: chosenSelection.url,
+      size: chosenSelection.size,
       status: 'PENDING'
     };
   };
@@ -64,27 +74,19 @@ export default function LeafletApp() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.type !== 'application/pdf') {
-      alert("❌ Only valid PDF files are accepted.");
-      return;
-    }
-
     const objectUrl = URL.createObjectURL(file);
-    const fileSizeStr = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
-
     const newBook: BookItem = {
       id: Date.now().toString(),
       title: file.name,
-      type: 'PDF',
+      type: 'EBOOK',
       fileUrl: objectUrl,
-      size: fileSizeStr
+      size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`
     };
 
     setMyShelf(prev => [...prev, newBook]);
   };
 
   const sendToMarket = (book: BookItem) => {
-    // LIMIT CHANGED TO 0: Allowing complete evacuation of Vault Storage
     setMyShelf(prev => prev.filter(b => b.id !== book.id));
     setGlobalPool(prev => [...prev, book]);
 
@@ -93,7 +95,7 @@ export default function LeafletApp() {
     setTimeout(() => {
       const freshBids: SwapRequest[] = [];
       for (let i = 0; i < quantityOfOffersToSpawn; i++) {
-        freshBids.push(generateUniquePeerOffer(book.title));
+        freshBids.push(generateUniquePeerOffer(book.title, freshBids));
       }
       setTradeRequests(prev => [...freshBids, ...prev]);
     }, 600);
@@ -103,9 +105,9 @@ export default function LeafletApp() {
     const newlyAcquiredBook: BookItem = {
       id: Date.now().toString(),
       title: req.bookOffered,
-      type: 'PDF',
-      fileUrl: 'https://raw.githubusercontent.com/mozilla/pdf.js/master/web/compressed.tracemonkey-pldi-09.pdf',
-      size: `${(Math.random() * 5 + 1).toFixed(1)} MB`
+      type: 'EBOOK',
+      fileUrl: req.fileUrl,
+      size: req.size
     };
 
     setMyShelf(prev => [...prev, newlyAcquiredBook]);
@@ -118,7 +120,7 @@ export default function LeafletApp() {
     }));
 
     setUserCredits(prev => prev + 1);
-    tradeCount >= 5 ? null : setTradeCount(prev => prev + 1);
+    setTradeCount(prev => prev + 1);
   };
 
   const handleRejectTrade = (id: string) => {
@@ -141,8 +143,8 @@ export default function LeafletApp() {
       
       <header className="max-w-7xl mx-auto mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-6">
         <div>
-          <h1 className="text-xl font-black tracking-tighter">🌿 LEAFLET SCALED INTERNALS</h1>
-          <p className="text-xs text-slate-500 mt-1">Node Rank: {tradeCount >= 5 ? 'Tier 3 Market Maker' : tradeCount >= 2 ? 'Tier 2 Relayer' : 'Tier 1 Edge Node'} // Completed Swaps: {tradeCount}</p>
+          <h1 className="text-xl font-black tracking-tighter">🌿 LEAFLET LIT-DISCOVERY NODE</h1>
+          <p className="text-xs text-slate-500 mt-1">Mode: Serendipitous Archive // Settled Trades: {tradeCount}</p>
         </div>
         <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-right">
           <p className="text-[10px] text-emerald-400 uppercase tracking-widest font-bold">Liquid Reserves</p>
@@ -152,7 +154,7 @@ export default function LeafletApp() {
 
       <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* VAULT TRACKING SECTION */}
+        {/* VAULT CONTROL BLOCK */}
         <section className="bg-slate-950 rounded-xl p-5 border border-slate-800 flex flex-col">
           <div className="flex justify-between items-center mb-4 border-b border-slate-900 pb-2">
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -164,21 +166,33 @@ export default function LeafletApp() {
           </div>
           
           <div className="border border-dashed border-slate-800 hover:border-slate-700 bg-slate-900/30 rounded-xl p-4 text-center relative mb-4 transition-colors">
-            <input type="file" accept=".pdf" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
-            <span className="text-xs text-slate-400">📥 Register New Asset Sequence</span>
+            <input type="file" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+            <span className="text-xs text-slate-400">📥 Drop Local Document to Register</span>
           </div>
 
           <div className="space-y-2 flex-1 overflow-y-auto max-h-96">
             {myShelf.map(item => (
-              <div key={item.id} className="p-3 rounded-lg border border-slate-800 bg-slate-900/60 flex flex-col gap-3">
-                <div onClick={() => setActivePdfUrl(item.fileUrl)} className="min-w-0 cursor-pointer group">
-                  <p className="text-xs font-bold text-slate-300 line-clamp-1 group-hover:text-emerald-400">{item.title}</p>
-                  <span className="text-[10px] text-slate-500">{item.size} // Mount Sandbox Stream</span>
+              <div key={item.id} className="p-3 rounded-lg border border-slate-800 bg-slate-900/60 flex flex-col gap-2">
+                <div className="flex justify-between items-start gap-2">
+                  <div onClick={() => setActivePdfUrl(item.fileUrl)} className="min-w-0 cursor-pointer group flex-1">
+                    <p className="text-xs font-bold text-slate-300 line-clamp-2 group-hover:text-emerald-400">{item.title}</p>
+                    <span className="text-[10px] text-slate-500">{item.size} // Open View 📖</span>
+                  </div>
+                  
+                  <a 
+                    href={item.fileUrl} 
+                    download={item.title}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 px-2 py-1 rounded text-[10px] font-bold tracking-tight transition-colors"
+                  >
+                    Save 💾
+                  </a>
                 </div>
                 
                 <button 
                   onClick={() => sendToMarket(item)}
-                  className="w-full bg-slate-900 hover:bg-emerald-950 text-slate-400 hover:text-emerald-400 border border-slate-800 hover:border-emerald-800 text-[10px] py-1 rounded font-bold uppercase tracking-wider transition-all"
+                  className="w-full bg-slate-900 hover:bg-emerald-950 text-slate-400 hover:text-emerald-400 border border-slate-800 hover:border-emerald-800 text-[10px] py-1.5 rounded font-bold uppercase tracking-wider transition-all mt-1"
                 >
                   Export To Ledger Book 📈
                 </button>
@@ -187,13 +201,13 @@ export default function LeafletApp() {
 
             {myShelf.length === 0 && (
               <div className="text-center py-8 text-xs text-red-400/70 border border-red-950 bg-red-950/10 p-4 rounded-xl italic">
-                ⚠️ All local assets deployed. Recall an active stock market book or drop a fresh file to re-initialize your local pipeline.
+                ⚠️ All local assets deployed. Recall a market listing to continue.
               </div>
             )}
           </div>
         </section>
 
-        {/* ORDER BOOK LISTINGS SECTION */}
+        {/* MARKET BOOK LISTINGS */}
         <section className="bg-slate-950 border border-slate-800 rounded-xl p-5">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4 border-b border-slate-900 pb-2">
             2. Global Market Pool (Active Listings)
@@ -203,13 +217,13 @@ export default function LeafletApp() {
               <div key={item.id} className="p-3 rounded-lg border border-slate-800 bg-slate-900/30 flex justify-between items-center text-xs">
                 <div className="min-w-0">
                   <p className="font-bold text-slate-200 line-clamp-1">{item.title}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Value: 1.00 CR // Weight: {item.size}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Weight: {item.size}</p>
                 </div>
                 <button 
                   onClick={() => handleBorrowFromPool(item)}
                   className="bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black px-2.5 py-1 rounded text-xs transition-colors"
                 >
-                  Recall Asset
+                  Recall
                 </button>
               </div>
             ))}
@@ -221,10 +235,10 @@ export default function LeafletApp() {
           </div>
         </section>
 
-        {/* INCOMING ACTIVE BIDS LOG PANEL */}
+        {/* SWAP TRANSACTIONS DEMANDS */}
         <section className="bg-slate-950 border border-slate-800 rounded-xl p-5 flex flex-col">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4 border-b border-slate-900 pb-2">
-            3. Dynamic Peer Network Swap Demands
+            3. Unique Peer Network Swap Demands
           </h2>
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[450px]">
             {tradeRequests.map(req => (
@@ -270,31 +284,37 @@ export default function LeafletApp() {
 
       </main>
 
-      {/* PIPELINE STREAM PREVIEW CONTAINER */}
+      {/* ISOLATED INTERACTIVE READER VIEW */}
       <footer className="max-w-7xl mx-auto mt-6">
         <div className="bg-slate-950 border border-slate-800 rounded-xl p-6">
           <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-4">
             <div>
-              <h2 className="text-xs font-bold text-white uppercase tracking-wider">🎛️ Virtualized Isolation Sandbox</h2>
-              <p className="text-[10px] text-slate-500 mt-1">Clean stream decryption mode.</p>
+              <h2 className="text-xs font-bold text-white uppercase tracking-wider">🎛️ Virtualized Isolation Sandbox Reader</h2>
+              <p className="text-[10px] text-slate-500 mt-1">Direct Gutenberg mirror streaming pipeline active.</p>
             </div>
             {activePdfUrl && (
               <button 
                 onClick={() => setActivePdfUrl(null)}
                 className="bg-slate-900 border border-slate-800 text-slate-400 hover:text-white px-3 py-1.5 rounded text-xs uppercase tracking-wider transition-colors"
               >
-                Terminate Mount
+                Close Sandbox
               </button>
             )}
           </div>
 
           {activePdfUrl ? (
             <div className="rounded-lg overflow-hidden border border-slate-800 bg-white">
-              <iframe src={activePdfUrl} width="100%" height="550px" title="Virtualized Document Layer" />
+              <iframe 
+                src={activePdfUrl} 
+                width="100%" 
+                height="650px" 
+                title="Gutenberg Document Viewer Instance"
+                className="bg-white" 
+              />
             </div>
           ) : (
             <div className="py-16 border border-dashed border-slate-800 rounded-lg text-center text-slate-600 text-xs italic">
-              Sandbox buffer unmounted. Click an asset's information cluster in your vault storage to clear viewing lines.
+              Sandbox reader unmounted. Click on an asset's title card info in your vault storage to launch full HTML pages.
             </div>
           )}
         </div>
