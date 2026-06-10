@@ -19,86 +19,112 @@ export interface SwapRequest {
   size: string;
 }
 
-// Fixed Gutenberg Cache Stream Pool
-const DISCOVERY_POOL = [
-  { title: 'Pride and Prejudice.html', url: 'https://www.gutenberg.org/cache/epub/1342/pg1342-images.html', size: '1.1 MB' },
-  { title: 'The Count of Monte Cristo.html', url: 'https://www.gutenberg.org/cache/epub/1184/pg1184-images.html', size: '4.8 MB' },
-  { title: 'The Adventures of Sherlock Holmes.html', url: 'https://www.gutenberg.org/cache/epub/1661/pg1661-images.html', size: '1.5 MB' },
-  { title: 'Alice in Wonderland (Illustrated).html', url: 'https://www.gutenberg.org/cache/epub/11/pg11-images.html', size: '0.9 MB' },
-  { title: 'The Time Machine.html', url: 'https://www.gutenberg.org/cache/epub/35/pg35-images.html', size: '0.6 MB' },
-  { title: 'Frankenstein (1818 Edition).html', url: 'https://www.gutenberg.org/cache/epub/84/pg84-images.html', size: '1.2 MB' },
-  { title: 'The Art of War.html', url: 'https://www.gutenberg.org/cache/epub/132/pg132-images.html', size: '0.5 MB' }
-];
-
 export default function LeafletApp() {
-  // --- 1. CORE CLIENT STATE ---
+  // --- CORE CLIENT STATE ---
   const [userCredits, setUserCredits] = useState<number>(3);
   const [activePdfUrl, setActivePdfUrl] = useState<string | null>(null);
   const [tradeCount, setTradeCount] = useState<number>(0);
   
+  // Search state for live query
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+
   const [myShelf, setMyShelf] = useState<BookItem[]>([
-    { id: 'init_1', title: 'Pride and Prejudice.html', type: 'EBOOK', fileUrl: 'https://www.gutenberg.org/cache/epub/1342/pg1342-images.html', size: '1.1 MB' },
-    { id: 'init_2', title: 'The Count of Monte Cristo.html', type: 'EBOOK', fileUrl: 'https://www.gutenberg.org/cache/epub/1184/pg1184-images.html', size: '4.8 MB' },
-    { id: 'init_3', title: 'The Time Machine.html', type: 'EBOOK', fileUrl: 'https://www.gutenberg.org/cache/epub/35/pg35-images.html', size: '0.6 MB' }
+    { id: '1342', title: 'Pride and Prejudice', type: 'EBOOK', fileUrl: 'https://www.gutenberg.org/cache/epub/1342/pg1342-images.html', size: '1.1 MB' },
+    { id: '1184', title: 'The Count of Monte Cristo', type: 'EBOOK', fileUrl: 'https://www.gutenberg.org/cache/epub/1184/pg1184-images.html', size: '4.8 MB' }
   ]);
 
   const [globalPool, setGlobalPool] = useState<BookItem[]>([]);
   const [tradeRequests, setTradeRequests] = useState<SwapRequest[]>([]);
 
-  // --- 2. UNIQUE DISCOVERY FILTER GENERATOR ---
-  const generateUniquePeerOffer = (requestedBookTitle: string, existingBids: SwapRequest[]): SwapRequest => {
-    const ownedTitles = myShelf.map(b => b.title);
-    const pooledTitles = globalPool.map(b => b.title);
-    const activeBidTitles = [...tradeRequests, ...existingBids].map(r => r.bookOffered);
-    const forbiddenTitles = [...ownedTitles, ...pooledTitles, ...activeBidTitles];
+  // --- 1. THE DYNAMIC NETWORK LOOKUP ---
+  const handleLiveNetworkSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
 
-    const availablePool = DISCOVERY_POOL.filter(item => !forbiddenTitles.includes(item.title));
+    setIsSearching(true);
+    try {
+      // Point directly to our local Next.js server route instead of a public proxy
+      const response = await fetch(`/api/books?search=${encodeURIComponent(searchQuery)}`);
+      const data = await response.json();
 
-    const chosenSelection = availablePool.length > 0
-      ? availablePool[Math.floor(Math.random() * availablePool.length)]
-      : { title: 'Moby Dick (Surplus Copy).html', url: 'https://www.gutenberg.org/cache/epub/2701/pg2701-images.html', size: '3.2 MB' };
+      if (!data.results || data.results.length === 0) {
+        alert("❌ No matching titles broadcasted on public directories.");
+        return;
+      }
+
+      const topMatch = data.results[0];
+      const bookId = topMatch.id;
+      const dynamicUrl = `https://www.gutenberg.org/cache/epub/${bookId}/pg${bookId}-images.html`;
+
+      const discoveredBook: BookItem = {
+        id: bookId.toString(),
+        title: topMatch.title,
+        type: 'EBOOK',
+        fileUrl: dynamicUrl,
+        size: '1.5 MB'
+      };
+
+      if (myShelf.some(b => b.id === discoveredBook.id)) {
+        alert("⚠️ Node conflict: This asset already resides in your local vault.");
+        return;
+      }
+
+      setMyShelf(prev => [discoveredBook, ...prev]);
+      setSearchQuery('');
+    } catch (err) {
+      console.error("Network sync broken: ", err);
+      alert("⚠️ Error fetching dynamic ledger metadata.");
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // --- 2. UNIQUE PEER GENERATOR (AUTONOMOUS SELECTION) ---
+  const generateDynamicPeerOffer = async (requestedBookTitle: string): Promise<SwapRequest> => {
+    let peerOffer = { title: 'Moby Dick', url: 'https://www.gutenberg.org/cache/epub/2701/pg2701-images.html' };
+    
+    try {
+      const topics = ['adventure', 'classic', 'science', 'history', 'mystery'];
+      const randomTopic = topics[Math.floor(Math.random() * topics.length)];
+      
+      // Point to our local server route here too
+      const response = await fetch(`/api/books?topic=${randomTopic}`);
+      const data = await response.json();
+      
+      if (data.results && data.results.length > 0) {
+        const fallbackList = data.results.filter((b: any) => !myShelf.some(m => m.id === b.id.toString()));
+        const selection = fallbackList[Math.floor(Math.random() * Math.min(fallbackList.length, 10))];
+        if (selection) {
+          peerOffer = {
+            title: selection.title,
+            url: `https://www.gutenberg.org/cache/epub/${selection.id}/pg${selection.id}-images.html`
+          };
+        }
+      }
+    } catch (e) {
+      // Silent fallback
+    }
 
     return {
-      id: `req_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      id: `req_${Date.now()}`,
       peerNode: `Node_${Math.floor(Math.random() * 899 + 100)}`,
       bookRequested: requestedBookTitle,
-      bookOffered: chosenSelection.title,
-      fileUrl: chosenSelection.url,
-      size: chosenSelection.size,
+      bookOffered: peerOffer.title,
+      fileUrl: peerOffer.url,
+      size: '1.8 MB',
       status: 'PENDING'
     };
   };
 
   // --- 3. CORE INTERACTIVE HANDLERS ---
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const objectUrl = URL.createObjectURL(file);
-    const newBook: BookItem = {
-      id: Date.now().toString(),
-      title: file.name,
-      type: 'EBOOK',
-      fileUrl: objectUrl,
-      size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`
-    };
-
-    setMyShelf(prev => [...prev, newBook]);
-  };
-
-  const sendToMarket = (book: BookItem) => {
+  const sendToMarket = async (book: BookItem) => {
     setMyShelf(prev => prev.filter(b => b.id !== book.id));
     setGlobalPool(prev => [...prev, book]);
 
-    const quantityOfOffersToSpawn = tradeCount >= 5 ? 4 : tradeCount >= 2 ? 3 : 2;
-    
-    setTimeout(() => {
-      const freshBids: SwapRequest[] = [];
-      for (let i = 0; i < quantityOfOffersToSpawn; i++) {
-        freshBids.push(generateUniquePeerOffer(book.title, freshBids));
-      }
-      setTradeRequests(prev => [...freshBids, ...prev]);
-    }, 600);
+    // Async generating dynamic trades based on actual public titles
+    const incomingBid = await generateDynamicPeerOffer(book.title);
+    setTradeRequests(prev => [incomingBid, ...prev]);
   };
 
   const handleAcceptTrade = (req: SwapRequest) => {
@@ -144,7 +170,7 @@ export default function LeafletApp() {
       <header className="max-w-7xl mx-auto mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-6">
         <div>
           <h1 className="text-xl font-black tracking-tighter">🌿 LEAFLET LIT-DISCOVERY NODE</h1>
-          <p className="text-xs text-slate-500 mt-1">Mode: Serendipitous Archive // Settled Trades: {tradeCount}</p>
+          <p className="text-xs text-slate-500 mt-1">Mode: Dynamic API Sync Engine // Settled Trades: {tradeCount}</p>
         </div>
         <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-right">
           <p className="text-[10px] text-emerald-400 uppercase tracking-widest font-bold">Liquid Reserves</p>
@@ -152,23 +178,33 @@ export default function LeafletApp() {
         </div>
       </header>
 
+      {/* NEW DYNAMIC SEARCH BAR */}
+      <section className="max-w-7xl mx-auto mb-6 bg-slate-950 border border-slate-800 p-4 rounded-xl">
+        <form onSubmit={handleLiveNetworkSearch} className="flex gap-2">
+          <input 
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Type any book title or author (e.g., Dracula, Charles Dickens, H.G. Wells)..." 
+            className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors"
+          />
+          <button 
+            type="submit" 
+            disabled={isSearching}
+            className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-slate-950 disabled:text-slate-500 font-bold px-6 py-2 rounded-lg text-sm tracking-wide transition-all"
+          >
+            {isSearching ? 'SYNCING...' : 'FETCH BOOK 📡'}
+          </button>
+        </form>
+      </section>
+
       <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* VAULT CONTROL BLOCK */}
         <section className="bg-slate-950 rounded-xl p-5 border border-slate-800 flex flex-col">
-          <div className="flex justify-between items-center mb-4 border-b border-slate-900 pb-2">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              1. Vault Storage ({myShelf.length} Owned)
-            </h2>
-            <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${myShelf.length === 0 ? 'bg-red-950 text-red-400 border border-red-900' : 'bg-slate-900 text-slate-400'}`}>
-              {myShelf.length === 0 ? 'EMPTY VAULT' : 'Active Pool'}
-            </span>
-          </div>
-          
-          <div className="border border-dashed border-slate-800 hover:border-slate-700 bg-slate-900/30 rounded-xl p-4 text-center relative mb-4 transition-colors">
-            <input type="file" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
-            <span className="text-xs text-slate-400">📥 Drop Local Document to Register</span>
-          </div>
+          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4 border-b border-slate-900 pb-2">
+            1. Vault Storage ({myShelf.length} Loaded)
+          </h2>
 
           <div className="space-y-2 flex-1 overflow-y-auto max-h-96">
             {myShelf.map(item => (
@@ -176,12 +212,12 @@ export default function LeafletApp() {
                 <div className="flex justify-between items-start gap-2">
                   <div onClick={() => setActivePdfUrl(item.fileUrl)} className="min-w-0 cursor-pointer group flex-1">
                     <p className="text-xs font-bold text-slate-300 line-clamp-2 group-hover:text-emerald-400">{item.title}</p>
-                    <span className="text-[10px] text-slate-500">{item.size} // Open View 📖</span>
+                    <span className="text-[10px] text-slate-500">ID: #{item.id} // Open View 📖</span>
                   </div>
                   
                   <a 
                     href={item.fileUrl} 
-                    download={item.title}
+                    download={`${item.title}.html`}
                     target="_blank"
                     rel="noreferrer"
                     className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 px-2 py-1 rounded text-[10px] font-bold tracking-tight transition-colors"
@@ -198,26 +234,19 @@ export default function LeafletApp() {
                 </button>
               </div>
             ))}
-
-            {myShelf.length === 0 && (
-              <div className="text-center py-8 text-xs text-red-400/70 border border-red-950 bg-red-950/10 p-4 rounded-xl italic">
-                ⚠️ All local assets deployed. Recall a market listing to continue.
-              </div>
-            )}
           </div>
         </section>
 
-        {/* MARKET BOOK LISTINGS */}
+        {/* MARKET POOL */}
         <section className="bg-slate-950 border border-slate-800 rounded-xl p-5">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4 border-b border-slate-900 pb-2">
-            2. Global Market Pool (Active Listings)
+            2. Global Market Pool
           </h2>
           <div className="space-y-2">
             {globalPool.map(item => (
               <div key={item.id} className="p-3 rounded-lg border border-slate-800 bg-slate-900/30 flex justify-between items-center text-xs">
                 <div className="min-w-0">
                   <p className="font-bold text-slate-200 line-clamp-1">{item.title}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Weight: {item.size}</p>
                 </div>
                 <button 
                   onClick={() => handleBorrowFromPool(item)}
@@ -227,32 +256,36 @@ export default function LeafletApp() {
                 </button>
               </div>
             ))}
-            {globalPool.length === 0 && (
-              <div className="text-center py-12 border border-slate-900 text-xs text-slate-600 italic">
-                Order book idle. Export items out of your Vault instance to collect cross-node bids.
-              </div>
-            )}
           </div>
         </section>
 
-        {/* SWAP TRANSACTIONS DEMANDS */}
+        {/* TRADE SWAPS */}
         <section className="bg-slate-950 border border-slate-800 rounded-xl p-5 flex flex-col">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4 border-b border-slate-900 pb-2">
-            3. Unique Peer Network Swap Demands
+            3. Dynamic Peer Network Swaps
           </h2>
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[450px]">
             {tradeRequests.map(req => (
-              <div key={req.id} className={`p-3 rounded-lg border text-xs flex flex-col gap-2 ${req.status === 'ACCEPTED' ? 'border-emerald-900 bg-emerald-950/10' : req.status === 'REJECTED' ? 'border-slate-800 opacity-40' : 'border-slate-800 bg-slate-900/20'}`}>
+              <div 
+                key={req.id} 
+                className={`p-3 rounded-lg border text-xs flex flex-col gap-2 ${
+                  req.status === 'ACCEPTED' 
+                    ? 'border-emerald-900 bg-emerald-950/10' 
+                    : req.status === 'REJECTED' 
+                    ? 'border-slate-800 opacity-40' 
+                    : 'border-slate-800 bg-slate-900/20'
+                }`}
+              >
                 <div className="flex justify-between text-[10px]">
                   <span className="text-blue-400 font-bold">{req.peerNode}</span>
-                  <span className={`font-bold ${req.status === 'ACCEPTED' ? 'text-emerald-500' : req.status === 'REJECTED' ? 'text-red-500' : 'text-amber-500'}`}>
+                  <span className={`font-bold ${req.status === 'ACCEPTED' ? 'text-emerald-500' : 'text-amber-500'}`}>
                     {req.status}
                   </span>
                 </div>
                 <div>
                   <p className="text-slate-500 text-[10px]">Requested Asset:</p>
                   <p className="text-slate-300 font-semibold line-clamp-1">{req.bookRequested}</p>
-                  <p className="text-slate-500 text-[10px] mt-1">Offered Counter-Asset:</p>
+                  <p className="text-slate-500 text-[10px] mt-1">Offered Counter-Asset (Fetched Live):</p>
                   <p className="text-emerald-400 font-semibold line-clamp-1">🔄 {req.bookOffered}</p>
                 </div>
                 
@@ -274,17 +307,12 @@ export default function LeafletApp() {
                 )}
               </div>
             ))}
-            {tradeRequests.length === 0 && (
-              <div className="text-center py-12 border border-slate-900 text-xs text-slate-600 italic">
-                Awaiting tokenized asset exports to sync market bid positions.
-              </div>
-            )}
           </div>
         </section>
 
       </main>
 
-      {/* ISOLATED INTERACTIVE READER VIEW */}
+      {/* THE VIEW SANDBOX */}
       <footer className="max-w-7xl mx-auto mt-6">
         <div className="bg-slate-950 border border-slate-800 rounded-xl p-6">
           <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-4">
@@ -304,17 +332,11 @@ export default function LeafletApp() {
 
           {activePdfUrl ? (
             <div className="rounded-lg overflow-hidden border border-slate-800 bg-white">
-              <iframe 
-                src={activePdfUrl} 
-                width="100%" 
-                height="650px" 
-                title="Gutenberg Document Viewer Instance"
-                className="bg-white" 
-              />
+              <iframe src={activePdfUrl} width="100%" height="650px" className="bg-white" />
             </div>
           ) : (
             <div className="py-16 border border-dashed border-slate-800 rounded-lg text-center text-slate-600 text-xs italic">
-              Sandbox reader unmounted. Click on an asset's title card info in your vault storage to launch full HTML pages.
+              Sandbox empty. Search a book above, click its title in Vault Storage, and read it here instantly!
             </div>
           )}
         </div>
